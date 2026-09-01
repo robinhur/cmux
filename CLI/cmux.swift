@@ -23569,6 +23569,7 @@ struct CMUXCLI {
     }
 
     private final class CodexTeamsAppServerConnection {
+        private static let appServerMaximumMessageSize = 64 * 1024 * 1024
         private let session: URLSession
         private let task: URLSessionWebSocketTask
         private var nextRequestId = 1
@@ -23579,6 +23580,7 @@ struct CMUXCLI {
             configuration.timeoutIntervalForResource = 10
             session = URLSession(configuration: configuration)
             task = session.webSocketTask(with: url)
+            task.maximumMessageSize = Self.appServerMaximumMessageSize
         }
 
         func resume() {
