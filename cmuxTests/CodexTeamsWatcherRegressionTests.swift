@@ -6,6 +6,51 @@ import Testing
 @Suite(.serialized)
 final class CodexTeamsWatcherRegressionTests {
     @Test
+    func watcherUpdatesStatusOnlyForItsOwnedRootThread() throws {
+        let appServer = try FakeCodexTeamsAppServer(lifecycleOnly: true)
+        defer { appServer.stop() }
+
+        let cmuxSocket = try RecordingCodexTeamsCmuxSocket()
+        defer { cmuxSocket.stop() }
+
+        let running = try startWatcher(appServer: appServer, cmuxSocket: cmuxSocket)
+        defer { stop(running.process) }
+
+        #expect(
+            cmuxSocket.waitForMethod(
+                "surface.split",
+                containing: "lifecycle-subagent-thread",
+                timeout: 10
+            )
+        )
+
+        #expect(appServer.sendStatus(threadId: "other-root-thread", type: "idle"))
+        Thread.sleep(forTimeInterval: 0.1)
+        #expect(
+            !cmuxSocket.commandSnapshot().contains { $0.contains("set_status codex") },
+            "a different root thread on the same app-server must not repaint this workspace"
+        )
+
+        #expect(appServer.sendStatus(threadId: "root-thread", type: "idle"))
+        #expect(
+            cmuxSocket.waitForCommand(
+                containing: "set_status codex 입력 대기 --icon=bell.badge.fill --color=#FFFF00 --priority=100 --tab=workspace-root",
+                timeout: 5
+            ),
+            "the owned root thread should mark exactly its workspace as waiting for input"
+        )
+
+        #expect(appServer.sendStatus(threadId: "root-thread", type: "active"))
+        #expect(
+            cmuxSocket.waitForCommand(
+                containing: "set_status codex 실행중 --icon=bolt.fill --color=#39FF14 --priority=90 --tab=workspace-root",
+                timeout: 5
+            ),
+            "the owned root thread should mark exactly its workspace as running"
+        )
+    }
+
+    @Test
     func watcherClosesIdleSubagentPaneAndReopensItForFollowUp() throws {
         let appServer = try FakeCodexTeamsAppServer(lifecycleOnly: true)
         defer { appServer.stop() }
@@ -85,6 +130,8 @@ final class CodexTeamsWatcherRegressionTests {
             "workspace-root",
             "--surface-id",
             "surface-root",
+            "--root-thread-id",
+            "root-thread",
             "--app-server-url",
             "ws://127.0.0.1:\(appServer.port)",
             "--codex-path",
@@ -202,6 +249,7 @@ final class CodexTeamsWatcherRegressionTests {
             "__codex-teams-watch",
             "--workspace-id", "workspace-root",
             "--surface-id", "surface-root",
+            "--root-thread-id", "root-thread",
             "--app-server-url", "ws://127.0.0.1:\(appServer.port)",
             "--codex-path", "/usr/bin/codex",
             "--max-auto-depth", "2",
@@ -424,7 +472,7 @@ private final class FakeCodexTeamsAppServer: @unchecked Sendable {
             return ["id": id, "result": [:]]
         case "thread/loaded/list":
             let loadedThreadIds = lifecycleOnly
-                ? ["root-thread", "lifecycle-subagent-thread"]
+                ? ["root-thread", "other-root-thread", "lifecycle-subagent-thread"]
                 : ["root-thread", "backfilled-subagent-thread"]
             return [
                 "id": id,
@@ -475,7 +523,7 @@ private final class FakeCodexTeamsAppServer: @unchecked Sendable {
             ]
         }
         return [
-            "id": "root-thread",
+            "id": id,
             "cwd": "/tmp",
             "status": ["type": "active"]
         ]
