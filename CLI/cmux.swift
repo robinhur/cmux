@@ -23787,6 +23787,8 @@ struct CMUXCLI {
         private var threadById: [String: CodexTeamsThread] = [:]
         private var pendingThreadIds = Set<String>()
         private var openedThreadIds = Set<String>()
+        private var surfaceIdByThreadId: [String: String] = [:]
+        private var openedThreadOrder: [String] = []
         private var readinessProbeThreadIds = Set<String>()
         private var attachableThreadIds = Set<String>()
         private let readinessLock = NSLock()
@@ -23893,6 +23895,12 @@ struct CMUXCLI {
             if message["id"] != nil { return }
             guard method.hasPrefix("thread/"),
                   let params = message["params"] as? [String: Any] else {
+                return
+            }
+            if let threadId = params["threadId"] as? String,
+               !threadId.isEmpty,
+               let statusType = CMUXCLI.codexTeamsStatusType(fromStatusParams: params),
+               try handleKnownThreadStatusChange(threadId: threadId, statusType: statusType) {
                 return
             }
             guard let threadObject = params["thread"] as? [String: Any],
@@ -24214,6 +24222,68 @@ struct CMUXCLI {
             try drainPendingChildren(parentThreadId: thread.id)
         }
 
+        private func handleKnownThreadStatusChange(
+            threadId: String,
+            statusType: String
+        ) throws -> Bool {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            guard let current = threadById[threadId] else { return false }
+
+            let updated = CodexTeamsThread(
+                id: current.id,
+                cwd: current.cwd,
+                statusType: statusType,
+                agentNickname: current.agentNickname,
+                agentRole: current.agentRole,
+                spawn: current.spawn
+            )
+            threadById[threadId] = updated
+
+            // A root thread shares the same app-server lifecycle stream, but
+            // its surface belongs to the caller and must never be auto-closed.
+            guard let spawn = updated.spawn else { return true }
+
+            if CMUXCLI.codexTeamsStatusIsIdle(statusType) {
+                try closeSubagentPaneIfOpen(threadId: threadId)
+                return true
+            }
+            guard CMUXCLI.codexTeamsStatusIsActive(statusType) else { return true }
+
+            codexTeamsMarkResumedThreadAttachable(updated)
+            if parentByThreadId[threadId] == nil {
+                try observeSpawn(updated, spawn: spawn)
+            } else if !openedThreadIds.contains(threadId) {
+                try openObservedSubagent(updated, spawn: spawn)
+            }
+            return true
+        }
+
+        private func closeSubagentPaneIfOpen(threadId: String) throws {
+            guard let surfaceId = surfaceIdByThreadId[threadId] else { return }
+            _ = try reconnectedSocketClient().sendV2(method: "surface.close", params: [
+                "workspace_id": workspaceId,
+                "surface_id": surfaceId
+            ])
+
+            surfaceIdByThreadId.removeValue(forKey: threadId)
+            openedThreadIds.remove(threadId)
+            openedThreadOrder.removeAll { $0 == threadId }
+            codexTeamsDiscardAttachableThreadId(threadId)
+            lastAgentSurfaceId = openedThreadOrder.reversed().compactMap {
+                surfaceIdByThreadId[$0]
+            }.first
+
+            do {
+                _ = try reconnectedSocketClient().sendV2(method: "workspace.equalize_splits", params: [
+                    "workspace_id": workspaceId,
+                    "orientation": "vertical"
+                ])
+            } catch {
+                // The target pane is already closed; layout polish is best-effort.
+            }
+        }
+
         private func observeSpawn(
             _ thread: CodexTeamsThread,
             spawn: CodexTeamsSpawn
@@ -24299,6 +24369,8 @@ struct CMUXCLI {
                 }
             }
             openedThreadIds.insert(thread.id)
+            openedThreadOrder.removeAll { $0 == thread.id }
+            openedThreadOrder.append(thread.id)
         }
 
         private func codexTeamsScheduleReadinessProbe(threadId: String) {
@@ -24480,6 +24552,7 @@ struct CMUXCLI {
             guard let surfaceId = created["surface_id"] as? String else {
                 throw CLIError(message: "surface.split did not return surface_id")
             }
+            surfaceIdByThreadId[thread.id] = surfaceId
             lastAgentSurfaceId = surfaceId
 
             do {
@@ -24583,6 +24656,19 @@ struct CMUXCLI {
             return nil
         }
         return status["type"] as? String
+    }
+
+    private static func codexTeamsStatusType(fromStatusParams params: [String: Any]) -> String? {
+        guard let status = params["status"] as? [String: Any] else { return nil }
+        return status["type"] as? String
+    }
+
+    private static func codexTeamsStatusIsIdle(_ statusType: String) -> Bool {
+        statusType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "idle"
+    }
+
+    private static func codexTeamsStatusIsActive(_ statusType: String) -> Bool {
+        statusType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "active"
     }
 
     private static func codexTeamsThreadMayBeAttachable(_ thread: CodexTeamsThread) -> Bool {
