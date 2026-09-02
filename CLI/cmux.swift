@@ -23774,6 +23774,7 @@ struct CMUXCLI {
         private let appServerURL: String
         private let workspaceId: String
         private let rootSurfaceId: String
+        private let rootThreadId: String?
         private let codexExecutable: String
         private let launchPath: String?
         private let maxAutoDepth: Int
@@ -23806,6 +23807,7 @@ struct CMUXCLI {
             appServerURL: String,
             workspaceId: String,
             rootSurfaceId: String,
+            rootThreadId: String?,
             codexExecutable: String,
             launchPath: String?,
             maxAutoDepth: Int,
@@ -23815,6 +23817,7 @@ struct CMUXCLI {
             self.appServerURL = appServerURL
             self.workspaceId = workspaceId
             self.rootSurfaceId = rootSurfaceId
+            self.rootThreadId = rootThreadId?.trimmingCharacters(in: .whitespacesAndNewlines)
             self.codexExecutable = codexExecutable
             self.launchPath = launchPath
             self.maxAutoDepth = max(0, maxAutoDepth)
@@ -24242,7 +24245,10 @@ struct CMUXCLI {
 
             // A root thread shares the same app-server lifecycle stream, but
             // its surface belongs to the caller and must never be auto-closed.
-            guard let spawn = updated.spawn else { return true }
+            guard let spawn = updated.spawn else {
+                try updateOwnedRootStatus(threadId: threadId, statusType: statusType)
+                return true
+            }
 
             if CMUXCLI.codexTeamsStatusIsIdle(statusType) {
                 try closeSubagentPaneIfOpen(threadId: threadId)
@@ -24257,6 +24263,28 @@ struct CMUXCLI {
                 try openObservedSubagent(updated, spawn: spawn)
             }
             return true
+        }
+
+        private func updateOwnedRootStatus(threadId: String, statusType: String) throws {
+            // One app-server may have several loaded root threads. Fail closed
+            // unless the launcher named the exact resumed thread that owns this
+            // workspace; a stale root must never repaint another workspace.
+            guard let rootThreadId, threadId == rootThreadId else { return }
+
+            let state: (text: String, icon: String, color: String, priority: Int)
+            if CMUXCLI.codexTeamsStatusIsIdle(statusType) {
+                state = ("입력 대기", "bell.badge.fill", "#FFFF00", 100)
+            } else if CMUXCLI.codexTeamsStatusIsActive(statusType) {
+                state = ("실행중", "bolt.fill", "#39FF14", 90)
+            } else {
+                return
+            }
+
+            let command = "set_status codex \(state.text) --icon=\(state.icon) --color=\(state.color) --priority=\(state.priority) --tab=\(workspaceId)"
+            let response = try reconnectedSocketClient().send(command: command)
+            if response.hasPrefix("ERROR:") {
+                throw CLIError(message: response)
+            }
         }
 
         private func closeSubagentPaneIfOpen(threadId: String) throws {
@@ -24840,6 +24868,10 @@ struct CMUXCLI {
             launchContext: launchContext
         )
         let rootWorkspaceId = launchContext.workspaceId
+        let rootThreadId = Self.codexTeamsOwnedRootThreadId(
+            commandArgs: commandArgs,
+            environment: launcherEnvironment
+        )
         try Self.validateCodexTeamsWorkingDirectory(
             commandArgs: commandArgs,
             baseDirectory: launcherEnvironment["PWD"] ?? FileManager.default.currentDirectoryPath
@@ -24966,6 +24998,9 @@ struct CMUXCLI {
         if let rootPid = rootCodex?.processIdentifier {
             watcherArguments += ["--owner-pid", String(rootPid)]
         }
+        if let rootThreadId, !rootThreadId.isEmpty {
+            watcherArguments += ["--root-thread-id", rootThreadId]
+        }
         let watcherLifetime = appServer.takeWatcherLifetimeWriteHandle()
         do {
             watcher = try startCodexTeamsProcess(
@@ -24993,6 +25028,28 @@ struct CMUXCLI {
         var result = environment
         result["PATH"] = codexTeamsAugmentedPath(environment: environment)
         return result
+    }
+
+    static func codexTeamsOwnedRootThreadId(
+        commandArgs: [String],
+        environment: [String: String]
+    ) -> String? {
+        let argumentThreadId: String? = commandArgs.indices.compactMap { index in
+            guard commandArgs[index] == "resume", commandArgs.indices.contains(index + 1) else { return nil }
+            let candidate = commandArgs[index + 1]
+            return UUID(uuidString: candidate) == nil ? nil : candidate
+        }.first
+        let environmentThreadId = environment["SJ_CODEX_THREAD_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let validEnvironmentThreadId = environmentThreadId.flatMap {
+            UUID(uuidString: $0) == nil ? nil : $0
+        }
+
+        if let argumentThreadId, let validEnvironmentThreadId,
+           argumentThreadId != validEnvironmentThreadId {
+            return nil
+        }
+        return argumentThreadId ?? validEnvironmentThreadId
     }
 
     private func codexTeamsAugmentedPath(environment: [String: String]) -> String {
@@ -25276,7 +25333,8 @@ struct CMUXCLI {
         let (codexPath, rem3) = parseOption(rem2, name: "--codex-path")
         let (launchPath, rem4) = parseOption(rem3, name: "--launch-path")
         let (maxDepthRaw, rem5a) = parseOption(rem4, name: "--max-auto-depth")
-        let (ownerPidRaw, remaining) = parseOption(rem5a, name: "--owner-pid")
+        let (ownerPidRaw, rem5b) = parseOption(rem5a, name: "--owner-pid")
+        let (rootThreadId, remaining) = parseOption(rem5b, name: "--root-thread-id")
         if let unknown = remaining.first(where: { $0.hasPrefix("--") }) {
             throw CLIError(message: "__codex-teams-watch: unknown flag '\(unknown)'")
         }
@@ -25314,6 +25372,7 @@ struct CMUXCLI {
             appServerURL: appServerURL,
             workspaceId: workspaceId,
             rootSurfaceId: surfaceId,
+            rootThreadId: rootThreadId,
             codexExecutable: (codexExecutable?.isEmpty == false ? codexExecutable! : "codex"),
             launchPath: launchPath,
             maxAutoDepth: maxDepth,
