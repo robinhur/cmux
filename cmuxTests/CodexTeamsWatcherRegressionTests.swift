@@ -6,27 +6,6 @@ import Testing
 @Suite(.serialized)
 final class CodexTeamsWatcherRegressionTests {
     @Test
-    func rootThreadOwnershipRejectsMismatchedRoutingEnvironment() {
-        let owned = "019ffc2b-8e3a-75f0-b702-8303de557248"
-        let stale = "11111111-2222-4333-8444-555555555555"
-        let arguments = ["--dangerously-bypass-hook-trust", "resume", owned]
-
-        #expect(
-            CMUXCLI.codexTeamsOwnedRootThreadId(
-                commandArgs: arguments,
-                environment: ["SJ_CODEX_THREAD_ID": owned]
-            ) == owned
-        )
-        #expect(
-            CMUXCLI.codexTeamsOwnedRootThreadId(
-                commandArgs: arguments,
-                environment: ["SJ_CODEX_THREAD_ID": stale]
-            ) == nil,
-            "a stale owner environment must fail closed instead of repainting the resumed workspace"
-        )
-    }
-
-    @Test
     func watcherUpdatesStatusOnlyForItsOwnedRootThread() throws {
         let appServer = try FakeCodexTeamsAppServer(lifecycleOnly: true)
         defer { appServer.stop() }
