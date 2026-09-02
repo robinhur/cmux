@@ -6,6 +6,56 @@ import Testing
 @Suite(.serialized)
 final class CodexTeamsWatcherRegressionTests {
     @Test
+    func watcherClosesIdleSubagentPaneAndReopensItForFollowUp() throws {
+        let appServer = try FakeCodexTeamsAppServer(lifecycleOnly: true)
+        defer { appServer.stop() }
+
+        let cmuxSocket = try RecordingCodexTeamsCmuxSocket()
+        defer { cmuxSocket.stop() }
+
+        let running = try startWatcher(appServer: appServer, cmuxSocket: cmuxSocket)
+        defer { stop(running.process) }
+
+        #expect(
+            cmuxSocket.waitForMethod(
+                "surface.split",
+                containing: "lifecycle-subagent-thread",
+                timeout: 10
+            )
+        )
+
+        #expect(appServer.sendStatus(threadId: "lifecycle-subagent-thread", type: "idle"))
+        #expect(
+            cmuxSocket.waitForMethod(
+                "surface.close",
+                containing: "subagent-surface",
+                timeout: 5
+            ),
+            "an idle child thread should close only its mapped cmux surface"
+        )
+
+        #expect(appServer.sendStatus(threadId: "root-thread", type: "idle"))
+        Thread.sleep(forTimeInterval: 0.1)
+        #expect(
+            !cmuxSocket.commandSnapshot().contains {
+                $0.contains("surface.close") && $0.contains("surface-root")
+            },
+            "the root Codex surface must never be closed by child lifecycle handling"
+        )
+
+        #expect(appServer.sendStatus(threadId: "lifecycle-subagent-thread", type: "active"))
+        #expect(
+            cmuxSocket.waitForMethod(
+                "surface.split",
+                containing: "lifecycle-subagent-thread",
+                count: 2,
+                timeout: 5
+            ),
+            "a follow-up should reopen the previously closed child thread"
+        )
+    }
+
+    @Test
     func watcherOpensBackfilledAndLateSpawnedSubagentsWithoutThreadStreamSubscriptions() throws {
         let appServer = try FakeCodexTeamsAppServer()
         defer { appServer.stop() }
@@ -133,6 +183,55 @@ final class CodexTeamsWatcherRegressionTests {
         )
         #expect(!appServer.methodSnapshot().contains("thread/resume"))
     }
+
+    private func startWatcher(
+        appServer: FakeCodexTeamsAppServer,
+        cmuxSocket: RecordingCodexTeamsCmuxSocket
+    ) throws -> (process: Process, stderr: Pipe) {
+        let tempHome = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("cmux-codex-lifecycle-home-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
+
+        let process = Process()
+        let stderr = Pipe()
+        process.executableURL = URL(
+            fileURLWithPath: try BundledCLITestSupport.bundledCLIPath(for: CodexTeamsWatcherRegressionTests.self)
+        )
+        process.arguments = [
+            "--socket", cmuxSocket.path,
+            "__codex-teams-watch",
+            "--workspace-id", "workspace-root",
+            "--surface-id", "surface-root",
+            "--app-server-url", "ws://127.0.0.1:\(appServer.port)",
+            "--codex-path", "/usr/bin/codex",
+            "--max-auto-depth", "2",
+            "--owner-pid", String(getpid())
+        ]
+        var environment = ProcessInfo.processInfo.environment
+        environment["CMUX_CLI_SENTRY_DISABLED"] = "1"
+        environment["CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC"] = "1"
+        environment["HOME"] = tempHome.path
+        environment["CFFIXED_USER_HOME"] = tempHome.path
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = stderr
+        try process.run()
+        return (process, stderr)
+    }
+
+    private func stop(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let deadline = Date().addingTimeInterval(2)
+        while process.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        process.waitUntilExit()
+    }
 }
 
 private final class FakeCodexTeamsAppServer: @unchecked Sendable {
@@ -152,8 +251,11 @@ private final class FakeCodexTeamsAppServer: @unchecked Sendable {
     private var stopped = false
     private var methods: [String] = []
     private var readCounts: [String: Int] = [:]
+    private var activeClientFD: Int32 = -1
+    private let lifecycleOnly: Bool
 
-    init() throws {
+    init(lifecycleOnly: Bool = false) throws {
+        self.lifecycleOnly = lifecycleOnly
         let listener = try Self.bindLoopbackTCP()
         listenerFD = listener.fd
         port = listener.port
@@ -178,6 +280,25 @@ private final class FakeCodexTeamsAppServer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return methods
+    }
+
+    func sendStatus(threadId: String, type: String) -> Bool {
+        lock.lock()
+        let fd = activeClientFD
+        let available = !stopped && fd >= 0
+        lock.unlock()
+        guard available else { return false }
+        sendText(
+            [
+                "method": "thread/status/changed",
+                "params": [
+                    "threadId": threadId,
+                    "status": ["type": type]
+                ]
+            ],
+            to: fd
+        )
+        return true
     }
 
     private func appendMethod(_ method: String) {
@@ -222,7 +343,15 @@ private final class FakeCodexTeamsAppServer: @unchecked Sendable {
     }
 
     private func handle(clientFD: Int32) {
-        defer { Darwin.close(clientFD) }
+        lock.lock()
+        activeClientFD = clientFD
+        lock.unlock()
+        defer {
+            lock.lock()
+            if activeClientFD == clientFD { activeClientFD = -1 }
+            lock.unlock()
+            Darwin.close(clientFD)
+        }
         guard let headers = readHTTPHeaders(from: clientFD),
               let key = Self.headerValue("Sec-WebSocket-Key", in: headers) else {
             return
@@ -294,13 +423,13 @@ private final class FakeCodexTeamsAppServer: @unchecked Sendable {
         case "initialize":
             return ["id": id, "result": [:]]
         case "thread/loaded/list":
+            let loadedThreadIds = lifecycleOnly
+                ? ["root-thread", "lifecycle-subagent-thread"]
+                : ["root-thread", "backfilled-subagent-thread"]
             return [
                 "id": id,
                 "result": [
-                    "data": [
-                        "root-thread",
-                        "backfilled-subagent-thread"
-                    ]
+                    "data": loadedThreadIds
                 ]
             ]
         case "thread/read":
@@ -322,7 +451,8 @@ private final class FakeCodexTeamsAppServer: @unchecked Sendable {
             "backfilled-subagent-thread": "Zeno",
             "late-subagent-thread": "Hopper",
             "late-inflight-subagent-thread": "Kepler",
-            "reloaded-subagent-thread": "Reloader"
+            "reloaded-subagent-thread": "Reloader",
+            "lifecycle-subagent-thread": "Lifecycle"
         ]
         if let nickname = subagentNicknames[id] {
             // The reloaded thread reports `not_loaded` on its first read and only

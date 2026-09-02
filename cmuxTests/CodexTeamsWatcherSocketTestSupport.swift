@@ -57,6 +57,22 @@ final class RecordingCodexTeamsCmuxSocket: @unchecked Sendable {
         waitForCommand(matching: { Self.method(in: $0) == method && $0.contains(needle) }, timeout: timeout)
     }
 
+    func waitForMethod(
+        _ method: String,
+        containing needle: String,
+        count: Int,
+        timeout: TimeInterval
+    ) -> Bool {
+        waitForCommand(
+            matching: { _ in
+                self.commandSnapshot().filter {
+                    Self.method(in: $0) == method && $0.contains(needle)
+                }.count >= count
+            },
+            timeout: timeout
+        )
+    }
+
     func waitForCommand(containing needle: String, timeout: TimeInterval) -> Bool {
         waitForCommand(matching: { $0.contains(needle) }, timeout: timeout)
     }
