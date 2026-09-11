@@ -114,9 +114,17 @@ export function cmuxTuiAsDaemonUser(command: string, options?: { readonly exec?:
   );
 }
 
-export type CmuxTuiSource = { url: string; sha256: string; commit: string; builtAt: string | null };
+export type CmuxTuiSource = {
+  url: string;
+  sha256: string;
+  hookUrl: string;
+  hookSha256: string;
+  commit: string;
+  builtAt: string | null;
+};
 
 export const CMUX_TUI_LINUX_TARGET = "cmux-tui-x86_64-unknown-linux-musl";
+export const CMUX_TUI_HOOK_LINUX_TARGET = "cmux-tui-hook-x86_64-unknown-linux-musl";
 export const CMUX_TUI_DEFAULT_MANIFEST_URL = "https://files.cmux.com/cmux-tui/latest/manifest.json";
 const CMUX_TUI_MANIFEST_CACHE_MS = 5 * 60 * 1000;
 
@@ -144,16 +152,22 @@ export function parseCmuxTuiManifest(
   const commit = typeof record.commit === "string" ? record.commit : "";
   const binaries = record.binaries && typeof record.binaries === "object" ? record.binaries as Record<string, unknown> : {};
   const sha256 = typeof binaries[CMUX_TUI_LINUX_TARGET] === "string" ? (binaries[CMUX_TUI_LINUX_TARGET] as string).toLowerCase() : "";
+  const hookSha256 = typeof binaries[CMUX_TUI_HOOK_LINUX_TARGET] === "string" ? (binaries[CMUX_TUI_HOOK_LINUX_TARGET] as string).toLowerCase() : "";
   if (!/^[0-9a-f]{40}$/.test(commit)) {
     throw new ProviderError(provider, `cmux-tui manifest at ${manifestUrl} has no commit`);
   }
   if (!/^[0-9a-f]{64}$/.test(sha256)) {
     throw new ProviderError(provider, `cmux-tui manifest at ${manifestUrl} has no ${CMUX_TUI_LINUX_TARGET} sha256 — publish artifacts from a main with the musl target`);
   }
+  if (!/^[0-9a-f]{64}$/.test(hookSha256)) {
+    throw new ProviderError(provider, `cmux-tui manifest at ${manifestUrl} has no ${CMUX_TUI_HOOK_LINUX_TARGET} sha256 — publish the matching cmux-tui-hook artifact`);
+  }
   const base = manifestUrl.replace(/\/manifest\.json$/, "");
   return {
     url: `${base}/${CMUX_TUI_LINUX_TARGET}`,
     sha256,
+    hookUrl: `${base}/${CMUX_TUI_HOOK_LINUX_TARGET}`,
+    hookSha256,
     commit,
     builtAt: typeof record.builtAt === "string" ? record.builtAt : null,
   };
@@ -207,8 +221,11 @@ export function resetCmuxTuiSourceCache(): void {
  */
 export function cmuxTuiInstallCommand(source: CmuxTuiSource): string {
   const bin = '"$CMUX_TUI_BIN"';
+  const hookBin = '"$CMUX_TUI_HOOK_BIN"';
   const tmp = '"$CMUX_TUI_TMP"';
+  const hookTmp = '"$CMUX_TUI_HOOK_TMP"';
   const pinned = (path: string) => `printf '%s  %s\n' ${shellQuote(source.sha256)} ${path} | sha256sum -c >/dev/null 2>&1`;
+  const hookPinned = (path: string) => `printf '%s  %s\n' ${shellQuote(source.hookSha256)} ${path} | sha256sum -c >/dev/null 2>&1`;
   const fetch =
     `if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 --retry-delay 2 -o ${tmp} ${shellQuote(source.url)}; ` +
     `elif command -v wget >/dev/null 2>&1; then wget -q -O ${tmp} ${shellQuote(source.url)}; ` +
@@ -216,20 +233,26 @@ export function cmuxTuiInstallCommand(source: CmuxTuiSource): string {
   return [
     cmuxTuiLayoutSelector(),
     `CMUX_TUI_TMP="$CMUX_TUI_BIN.tmp"`,
+    `CMUX_TUI_HOOK_BIN="$CMUX_TUI_HOME/.cmux/bin/cmux-tui-hook"`,
+    `CMUX_TUI_HOOK_TMP="$CMUX_TUI_HOOK_BIN.tmp"`,
     `mkdir -p "$(dirname "$CMUX_TUI_BIN")"`,
     `if [ -x ${bin} ] && ${pinned(bin)}; then :; else ${fetch} && ${pinned(tmp)} && chmod 755 ${tmp} && mv -f ${tmp} ${bin}; fi`,
+    `if [ -x ${hookBin} ] && ${hookPinned(hookBin)}; then :; else if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 --retry-delay 2 -o ${hookTmp} ${shellQuote(source.hookUrl)}; elif command -v wget >/dev/null 2>&1; then wget -q -O ${hookTmp} ${shellQuote(source.hookUrl)}; else false; fi && ${hookPinned(hookTmp)} && chmod 755 ${hookTmp} && mv -f ${hookTmp} ${hookBin}; fi`,
     `ln -sfn ${bin} /usr/local/bin/cmux-tui`,
+    `ln -sfn ${hookBin} /usr/local/bin/cmux-tui-hook`,
     // Only the nodes this install created, never the daemon's state tree.
-    `if [ "$CMUX_TUI_USER" != root ]; then chown "$CMUX_TUI_USER:$CMUX_TUI_USER" "$CMUX_TUI_HOME/.cmux" "$CMUX_TUI_HOME/.cmux/bin" ${bin} 2>/dev/null || true; fi`,
+    `if [ "$CMUX_TUI_USER" != root ]; then chown "$CMUX_TUI_USER:$CMUX_TUI_USER" "$CMUX_TUI_HOME/.cmux" "$CMUX_TUI_HOME/.cmux/bin" ${bin} ${hookBin} 2>/dev/null || true; fi`,
     `${bin} --version`,
   ].join(" && ");
 }
 
 /** True when the installed binary matches the manifest pin (exit 0 from this command). */
 export function cmuxTuiPinCheckCommand(source: CmuxTuiSource): string {
+  const hookBin = '"$CMUX_TUI_HOME/.cmux/bin/cmux-tui-hook"';
   return (
     `${cmuxTuiLayoutSelector()} && ` +
-    `test -x "$CMUX_TUI_BIN" && printf '%s  %s\n' ${shellQuote(source.sha256)} "$CMUX_TUI_BIN" | sha256sum -c >/dev/null 2>&1`
+    `test -x "$CMUX_TUI_BIN" && printf '%s  %s\n' ${shellQuote(source.sha256)} "$CMUX_TUI_BIN" | sha256sum -c >/dev/null 2>&1 && ` +
+    `test -x ${hookBin} && printf '%s  %s\n' ${shellQuote(source.hookSha256)} ${hookBin} | sha256sum -c >/dev/null 2>&1`
   );
 }
 
