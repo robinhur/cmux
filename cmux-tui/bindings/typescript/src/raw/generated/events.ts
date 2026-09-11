@@ -1,5 +1,5 @@
 /* This file is generated. Do not edit by hand. */
-/* cmux-tui mux protocol 12, IR 8ff10c20fef75f9aaa1498eaf5e1107f084bdcf3febdcf8806fb4e7fc1c90b86. */
+/* cmux-tui mux protocol 12, IR a32cb8ec76bce28c995e39a62d6ea57136197ee7b173299dbc8f5c7f53ebdd47. */
 
 
 import type * as T from "./types.js";
@@ -179,6 +179,19 @@ export type PaneClosedEvent = { event: "pane-closed" } & {
   "pane": T.Id;
   "screen": T.Id;
   "workspace": T.Id;
+};
+
+/** Protocol v12; emission: emitted; streams: subscribe. */
+export type PresenceChangedEvent = { event: "presence-changed" } & {
+  "client": bigint;
+  "color": bigint;
+  "generation": bigint;
+  "highlight": (T.PresenceHighlight) | null;
+  "kind": (string) | null;
+  "name": (string) | null;
+  "pointer": (T.PresenceAnchor) | null;
+  "surface": (T.Id) | null;
+  "updated_at_ms": bigint;
 };
 
 /** Protocol v7; emission: emitted; streams: attach-render. */
@@ -425,6 +438,7 @@ export type KnownCmuxEvent =
   | PairingResolvedEvent
   | PaneAddedEvent
   | PaneClosedEvent
+  | PresenceChangedEvent
   | RenderDeltaEvent
   | RenderStateEvent
   | ResizedEvent
@@ -473,6 +487,7 @@ export type KnownSubscribeEvent =
   | PairingResolvedEvent
   | PaneAddedEvent
   | PaneClosedEvent
+  | PresenceChangedEvent
   | ScreenAddedEvent
   | ScreenClosedEvent
   | ScreenRenamedEvent

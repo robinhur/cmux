@@ -8,7 +8,7 @@ from typing import Mapping, Optional, Tuple
 
 SCHEMA_VERSION = 2
 MUX_PROTOCOL = 12
-IR_SHA256 = '8ff10c20fef75f9aaa1498eaf5e1107f084bdcf3febdcf8806fb4e7fc1c90b86'
+IR_SHA256 = 'a32cb8ec76bce28c995e39a62d6ea57136197ee7b173299dbc8f5c7f53ebdd47'
 
 
 @dataclass(frozen=True)
@@ -825,6 +825,39 @@ COMMANDS = {
         {
         },
     ),
+    'presence-clear': CommandMetadata(
+        'presence-clear',
+        'control',
+        12,
+        'presence-v1',
+        ('control', 'frontend', 'local-admin', 'provider-authority'),
+        None,
+        {
+        },
+    ),
+    'presence-list': CommandMetadata(
+        'presence-list',
+        'control',
+        12,
+        'presence-v1',
+        ('control', 'frontend', 'local-admin', 'provider-authority'),
+        None,
+        {
+        },
+    ),
+    'presence-update': CommandMetadata(
+        'presence-update',
+        'control',
+        12,
+        'presence-v1',
+        ('control', 'frontend', 'local-admin', 'provider-authority'),
+        None,
+        {
+            'highlight': CommandFieldMetadata(None, None),
+            'pointer': CommandFieldMetadata(None, None),
+            'surface': CommandFieldMetadata(None, None),
+        },
+    ),
     'process-info': CommandMetadata(
         'process-info',
         'control',
@@ -1434,6 +1467,7 @@ EVENTS = {
     'pairing-resolved': EventMetadata('pairing-resolved', 7, None, ('subscribe',), 'emitted'),
     'pane-added': EventMetadata('pane-added', 7, None, ('subscribe-deltas',), 'emitted'),
     'pane-closed': EventMetadata('pane-closed', 7, None, ('subscribe-deltas',), 'emitted'),
+    'presence-changed': EventMetadata('presence-changed', 12, 'presence-v1', ('subscribe',), 'emitted'),
     'render-delta': EventMetadata('render-delta', 7, None, ('attach-render',), 'emitted'),
     'render-state': EventMetadata('render-state', 7, None, ('attach-render',), 'emitted'),
     'resized': EventMetadata('resized', 6, None, ('attach-byte',), 'emitted'),

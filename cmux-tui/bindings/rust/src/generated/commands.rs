@@ -1,5 +1,5 @@
 // This file is generated. Do not edit by hand.
-// cmux-tui mux protocol 12, IR 8ff10c20fef75f9aaa1498eaf5e1107f084bdcf3febdcf8806fb4e7fc1c90b86.
+// cmux-tui mux protocol 12, IR a32cb8ec76bce28c995e39a62d6ea57136197ee7b173299dbc8f5c7f53ebdd47.
 // The emitter owns this layout so generation is independent of the installed rustfmt.
 
 use super::metadata::*;
@@ -787,6 +787,32 @@ pub struct PaneNeighborRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PingRequest {
 }
+
+#[rustfmt::skip]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PresenceClearRequest {
+}
+
+#[rustfmt::skip]
+pub type PresenceClearResult = T::EmptyResult;
+
+#[rustfmt::skip]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PresenceListRequest {
+}
+
+#[rustfmt::skip]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PresenceUpdateRequest {
+    #[serde(default, skip_serializing_if = "Optional::is_missing")]
+    pub highlight: Optional<T::PresenceHighlight>,
+    #[serde(default, skip_serializing_if = "Optional::is_missing")]
+    pub pointer: Optional<T::PresenceAnchor>,
+    pub surface: T::Id,
+}
+
+#[rustfmt::skip]
+pub type PresenceUpdateResult = T::EmptyResult;
 
 #[rustfmt::skip]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1619,6 +1645,18 @@ impl CmuxClient {
 
     pub fn ping(&mut self, request: PingRequest) -> Result<T::PingResult> {
         self.execute(&PING_METADATA, &request)
+    }
+
+    pub fn presence_clear(&mut self, request: PresenceClearRequest) -> Result<PresenceClearResult> {
+        self.execute(&PRESENCE_CLEAR_METADATA, &request)
+    }
+
+    pub fn presence_list(&mut self, request: PresenceListRequest) -> Result<T::PresenceListResult> {
+        self.execute(&PRESENCE_LIST_METADATA, &request)
+    }
+
+    pub fn presence_update(&mut self, request: PresenceUpdateRequest) -> Result<PresenceUpdateResult> {
+        self.execute(&PRESENCE_UPDATE_METADATA, &request)
     }
 
     pub fn process_info(&mut self, request: ProcessInfoRequest) -> Result<T::ProcessInfoResult> {

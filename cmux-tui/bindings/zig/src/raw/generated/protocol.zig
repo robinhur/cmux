@@ -7,7 +7,7 @@ const client_runtime = @import("../client.zig");
 
 pub const schema_version: u16 = 2;
 pub const mux_protocol: u16 = 12;
-pub const ir_sha256 = "8ff10c20fef75f9aaa1498eaf5e1107f084bdcf3febdcf8806fb4e7fc1c90b86";
+pub const ir_sha256 = "a32cb8ec76bce28c995e39a62d6ea57136197ee7b173299dbc8f5c7f53ebdd47";
 
 pub const AgentRecord = struct {
     session: wire.Nullable([]const u8),
@@ -772,6 +772,86 @@ pub const PingResult = struct {
     ok: bool,
     protocol: u32,
     version: []const u8,
+};
+
+pub const PresenceAnchorCell = struct {
+    col: u32,
+    row: u32,
+    scroll_offset: ?u64 = null,
+
+    pub const cmux_wire_optional_nonnull_fields = [_][]const u8{
+        "scroll_offset",
+    };
+};
+
+pub const PresenceAnchorPoint = struct {
+    x: f64,
+    y: f64,
+};
+
+pub const PresenceAnchor = union(enum) {
+    cell: PresenceAnchorCell,
+    point: PresenceAnchorPoint,
+
+    pub const cmux_wire_custom_union = true;
+
+    pub fn cmuxEncode(self: @This(), allocator: std.mem.Allocator) !wire.Value {
+        return switch (self) {
+            .cell => |payload| try wire.encodeTagged(allocator, "kind", "cell", payload),
+            .point => |payload| try wire.encodeTagged(allocator, "kind", "point", payload),
+        };
+    }
+
+    pub fn cmuxDecode(allocator: std.mem.Allocator, value: wire.Value) !@This() {
+        const tag_value = try wire.objectString(value, "kind");
+        if (std.mem.eql(u8, tag_value, "cell")) {
+            return .{ .cell = try wire.decodeLeaky(PresenceAnchorCell, allocator, value) };
+        }
+        if (std.mem.eql(u8, tag_value, "point")) {
+            return .{ .point = try wire.decodeLeaky(PresenceAnchorPoint, allocator, value) };
+        }
+        return error.UnknownUnionVariant;
+    }
+};
+
+pub const PresenceEntry = struct {
+    client: u64,
+    color: u64,
+    generation: u64,
+    highlight: wire.Nullable(PresenceHighlight),
+    kind: wire.Nullable([]const u8),
+    name: wire.Nullable([]const u8),
+    pointer: wire.Nullable(PresenceAnchor),
+    surface: wire.Nullable(Id),
+    updated_at_ms: u64,
+};
+
+pub const PresenceHighlight = struct {
+    end: PresenceAnchor,
+    mode: PresenceHighlightMode,
+    start: PresenceAnchor,
+};
+
+pub const PresenceHighlightMode = enum {
+    laser,
+    pin,
+
+    pub fn fromWire(value: []const u8) !@This() {
+        if (std.mem.eql(u8, value, "laser")) return .laser;
+        if (std.mem.eql(u8, value, "pin")) return .pin;
+        return error.UnknownEnumValue;
+    }
+
+    pub fn toWire(self: @This()) []const u8 {
+        return switch (self) {
+            .laser => "laser",
+            .pin => "pin",
+        };
+    }
+};
+
+pub const PresenceListResult = struct {
+    entries: []const PresenceEntry,
 };
 
 pub const ProcessInfoResult = struct {
@@ -3246,6 +3326,59 @@ pub fn ping(client: anytype, request: PingRequest) !wire.Decoded(PingResult) {
     );
 }
 
+pub const PresenceClearRequest = struct {};
+
+pub const PresenceClearResult = EmptyResult;
+
+pub fn presenceClear(client: anytype, request: PresenceClearRequest) !wire.Decoded(PresenceClearResult) {
+    return client.callTyped(
+        PresenceClearResult,
+        .{
+            .name = "presence-clear",
+            .authority = "control",
+            .since = 12,
+            .capability = "presence-v1",
+        },
+        request,
+    );
+}
+
+pub const PresenceListRequest = struct {};
+
+pub fn presenceList(client: anytype, request: PresenceListRequest) !wire.Decoded(PresenceListResult) {
+    return client.callTyped(
+        PresenceListResult,
+        .{
+            .name = "presence-list",
+            .authority = "control",
+            .since = 12,
+            .capability = "presence-v1",
+        },
+        request,
+    );
+}
+
+pub const PresenceUpdateRequest = struct {
+    highlight: wire.Field(PresenceHighlight) = .absent,
+    pointer: wire.Field(PresenceAnchor) = .absent,
+    surface: Id,
+};
+
+pub const PresenceUpdateResult = EmptyResult;
+
+pub fn presenceUpdate(client: anytype, request: PresenceUpdateRequest) !wire.Decoded(PresenceUpdateResult) {
+    return client.callTyped(
+        PresenceUpdateResult,
+        .{
+            .name = "presence-update",
+            .authority = "control",
+            .since = 12,
+            .capability = "presence-v1",
+        },
+        request,
+    );
+}
+
 pub const ProcessInfoRequest = struct {
     surface: Id,
 };
@@ -4528,6 +4661,19 @@ pub const PaneClosedEvent = struct {
     workspace: Id,
 };
 
+pub const PresenceChangedEvent = struct {
+    client: u64,
+    color: u64,
+    event: []const u8,
+    generation: u64,
+    highlight: wire.Nullable(PresenceHighlight),
+    kind: wire.Nullable([]const u8),
+    name: wire.Nullable([]const u8),
+    pointer: wire.Nullable(PresenceAnchor),
+    surface: wire.Nullable(Id),
+    updated_at_ms: u64,
+};
+
 pub const RenderDeltaEvent = struct {
     cursor: RenderCursor,
     default_bg: ?ColorHex = null,
@@ -4822,6 +4968,7 @@ pub const Event = union(enum) {
     pairing_resolved: PairingResolvedEvent,
     pane_added: PaneAddedEvent,
     pane_closed: PaneClosedEvent,
+    presence_changed: PresenceChangedEvent,
     render_delta: RenderDeltaEvent,
     render_state: RenderStateEvent,
     resized: ResizedEvent,
@@ -4875,6 +5022,7 @@ pub fn eventWireName(event: Event) []const u8 {
         .pairing_resolved => "pairing-resolved",
         .pane_added => "pane-added",
         .pane_closed => "pane-closed",
+        .presence_changed => "presence-changed",
         .render_delta => "render-delta",
         .render_state => "render-state",
         .resized => "resized",
@@ -5013,6 +5161,10 @@ pub fn decodeEvent(allocator: std.mem.Allocator, value: wire.Value) !DecodedEven
         const decoded = try wire.decodeLeaky(PaneClosedEvent, arena.allocator(), value);
         return .{ .arena = arena, .value = .{ .pane_closed = decoded } };
     }
+    if (std.mem.eql(u8, name, "presence-changed")) {
+        const decoded = try wire.decodeLeaky(PresenceChangedEvent, arena.allocator(), value);
+        return .{ .arena = arena, .value = .{ .presence_changed = decoded } };
+    }
     if (std.mem.eql(u8, name, "render-delta")) {
         const decoded = try wire.decodeLeaky(RenderDeltaEvent, arena.allocator(), value);
         return .{ .arena = arena, .value = .{ .render_delta = decoded } };
@@ -5134,7 +5286,7 @@ pub const CommandDescriptor = struct {
     stream: ?[]const u8,
 };
 
-pub const command_count: usize = 106;
+pub const command_count: usize = 109;
 pub const commands = [_]CommandDescriptor{
     .{ .name = "apply-layout", .authority = "control", .since = 6, .capability = null, .stream = null },
     .{ .name = "attach-surface", .authority = "frontend", .since = 5, .capability = null, .stream = "attach" },
@@ -5197,6 +5349,9 @@ pub const commands = [_]CommandDescriptor{
     .{ .name = "pairing-response", .authority = "local-admin", .since = 7, .capability = null, .stream = null },
     .{ .name = "pane-neighbor", .authority = "control", .since = 6, .capability = null, .stream = null },
     .{ .name = "ping", .authority = "control", .since = 6, .capability = null, .stream = null },
+    .{ .name = "presence-clear", .authority = "control", .since = 12, .capability = "presence-v1", .stream = null },
+    .{ .name = "presence-list", .authority = "control", .since = 12, .capability = "presence-v1", .stream = null },
+    .{ .name = "presence-update", .authority = "control", .since = 12, .capability = "presence-v1", .stream = null },
     .{ .name = "process-info", .authority = "control", .since = 6, .capability = null, .stream = null },
     .{ .name = "put-frontend-projection", .authority = "control", .since = 7, .capability = null, .stream = null },
     .{ .name = "read-screen", .authority = "control", .since = 5, .capability = null, .stream = null },
@@ -5275,32 +5430,33 @@ const event_streams_20 = [_][]const u8{"subscribe"};
 const event_streams_21 = [_][]const u8{"subscribe"};
 const event_streams_22 = [_][]const u8{"subscribe-deltas"};
 const event_streams_23 = [_][]const u8{"subscribe-deltas"};
-const event_streams_24 = [_][]const u8{"attach-render"};
+const event_streams_24 = [_][]const u8{"subscribe"};
 const event_streams_25 = [_][]const u8{"attach-render"};
-const event_streams_26 = [_][]const u8{"attach-byte"};
-const event_streams_27 = [_][]const u8{"subscribe-deltas"};
+const event_streams_26 = [_][]const u8{"attach-render"};
+const event_streams_27 = [_][]const u8{"attach-byte"};
 const event_streams_28 = [_][]const u8{"subscribe-deltas"};
 const event_streams_29 = [_][]const u8{"subscribe-deltas"};
-const event_streams_30 = [_][]const u8{ "subscribe", "attach-byte", "attach-render", "attach-browser" };
-const event_streams_31 = [_][]const u8{"subscribe"};
+const event_streams_30 = [_][]const u8{"subscribe-deltas"};
+const event_streams_31 = [_][]const u8{ "subscribe", "attach-byte", "attach-render", "attach-browser" };
 const event_streams_32 = [_][]const u8{"subscribe"};
 const event_streams_33 = [_][]const u8{"subscribe"};
 const event_streams_34 = [_][]const u8{"subscribe"};
 const event_streams_35 = [_][]const u8{"subscribe"};
-const event_streams_36 = [_][]const u8{"subscribe-deltas"};
+const event_streams_36 = [_][]const u8{"subscribe"};
 const event_streams_37 = [_][]const u8{"subscribe-deltas"};
 const event_streams_38 = [_][]const u8{"subscribe-deltas"};
-const event_streams_39 = [_][]const u8{"subscribe"};
+const event_streams_39 = [_][]const u8{"subscribe-deltas"};
 const event_streams_40 = [_][]const u8{"subscribe"};
 const event_streams_41 = [_][]const u8{"subscribe"};
-const event_streams_42 = [_][]const u8{"attach-byte"};
-const event_streams_43 = [_][]const u8{"subscribe"};
-const event_streams_44 = [_][]const u8{"subscribe-deltas"};
+const event_streams_42 = [_][]const u8{"subscribe"};
+const event_streams_43 = [_][]const u8{"attach-byte"};
+const event_streams_44 = [_][]const u8{"subscribe"};
 const event_streams_45 = [_][]const u8{"subscribe-deltas"};
 const event_streams_46 = [_][]const u8{"subscribe-deltas"};
 const event_streams_47 = [_][]const u8{"subscribe-deltas"};
+const event_streams_48 = [_][]const u8{"subscribe-deltas"};
 
-pub const event_count: usize = 48;
+pub const event_count: usize = 49;
 pub const events = [_]EventDescriptor{
     .{ .name = "agent-changed", .since = 11, .capability = null, .streams = &event_streams_0 },
     .{ .name = "bell", .since = 5, .capability = null, .streams = &event_streams_1 },
@@ -5326,28 +5482,29 @@ pub const events = [_]EventDescriptor{
     .{ .name = "pairing-resolved", .since = 7, .capability = null, .streams = &event_streams_21 },
     .{ .name = "pane-added", .since = 7, .capability = null, .streams = &event_streams_22 },
     .{ .name = "pane-closed", .since = 7, .capability = null, .streams = &event_streams_23 },
-    .{ .name = "render-delta", .since = 7, .capability = null, .streams = &event_streams_24 },
-    .{ .name = "render-state", .since = 7, .capability = null, .streams = &event_streams_25 },
-    .{ .name = "resized", .since = 6, .capability = null, .streams = &event_streams_26 },
-    .{ .name = "screen-added", .since = 7, .capability = null, .streams = &event_streams_27 },
-    .{ .name = "screen-closed", .since = 7, .capability = null, .streams = &event_streams_28 },
-    .{ .name = "screen-renamed", .since = 7, .capability = null, .streams = &event_streams_29 },
-    .{ .name = "scroll-changed", .since = 6, .capability = null, .streams = &event_streams_30 },
-    .{ .name = "status", .since = 5, .capability = null, .streams = &event_streams_31 },
-    .{ .name = "surface-exited", .since = 5, .capability = null, .streams = &event_streams_32 },
-    .{ .name = "surface-output", .since = 5, .capability = null, .streams = &event_streams_33 },
-    .{ .name = "surface-resize-failed", .since = 7, .capability = null, .streams = &event_streams_34 },
-    .{ .name = "surface-resized", .since = 5, .capability = null, .streams = &event_streams_35 },
-    .{ .name = "tab-added", .since = 7, .capability = null, .streams = &event_streams_36 },
-    .{ .name = "tab-closed", .since = 7, .capability = null, .streams = &event_streams_37 },
-    .{ .name = "tab-renamed", .since = 7, .capability = null, .streams = &event_streams_38 },
-    .{ .name = "terminal-registry-changed", .since = 9, .capability = null, .streams = &event_streams_39 },
-    .{ .name = "title-changed", .since = 5, .capability = null, .streams = &event_streams_40 },
-    .{ .name = "tree-changed", .since = 5, .capability = null, .streams = &event_streams_41 },
-    .{ .name = "vt-state", .since = 5, .capability = null, .streams = &event_streams_42 },
-    .{ .name = "window-title-requested", .since = 6, .capability = null, .streams = &event_streams_43 },
-    .{ .name = "workspace-added", .since = 7, .capability = null, .streams = &event_streams_44 },
-    .{ .name = "workspace-closed", .since = 7, .capability = null, .streams = &event_streams_45 },
-    .{ .name = "workspace-moved", .since = 7, .capability = null, .streams = &event_streams_46 },
-    .{ .name = "workspace-renamed", .since = 7, .capability = null, .streams = &event_streams_47 },
+    .{ .name = "presence-changed", .since = 12, .capability = "presence-v1", .streams = &event_streams_24 },
+    .{ .name = "render-delta", .since = 7, .capability = null, .streams = &event_streams_25 },
+    .{ .name = "render-state", .since = 7, .capability = null, .streams = &event_streams_26 },
+    .{ .name = "resized", .since = 6, .capability = null, .streams = &event_streams_27 },
+    .{ .name = "screen-added", .since = 7, .capability = null, .streams = &event_streams_28 },
+    .{ .name = "screen-closed", .since = 7, .capability = null, .streams = &event_streams_29 },
+    .{ .name = "screen-renamed", .since = 7, .capability = null, .streams = &event_streams_30 },
+    .{ .name = "scroll-changed", .since = 6, .capability = null, .streams = &event_streams_31 },
+    .{ .name = "status", .since = 5, .capability = null, .streams = &event_streams_32 },
+    .{ .name = "surface-exited", .since = 5, .capability = null, .streams = &event_streams_33 },
+    .{ .name = "surface-output", .since = 5, .capability = null, .streams = &event_streams_34 },
+    .{ .name = "surface-resize-failed", .since = 7, .capability = null, .streams = &event_streams_35 },
+    .{ .name = "surface-resized", .since = 5, .capability = null, .streams = &event_streams_36 },
+    .{ .name = "tab-added", .since = 7, .capability = null, .streams = &event_streams_37 },
+    .{ .name = "tab-closed", .since = 7, .capability = null, .streams = &event_streams_38 },
+    .{ .name = "tab-renamed", .since = 7, .capability = null, .streams = &event_streams_39 },
+    .{ .name = "terminal-registry-changed", .since = 9, .capability = null, .streams = &event_streams_40 },
+    .{ .name = "title-changed", .since = 5, .capability = null, .streams = &event_streams_41 },
+    .{ .name = "tree-changed", .since = 5, .capability = null, .streams = &event_streams_42 },
+    .{ .name = "vt-state", .since = 5, .capability = null, .streams = &event_streams_43 },
+    .{ .name = "window-title-requested", .since = 6, .capability = null, .streams = &event_streams_44 },
+    .{ .name = "workspace-added", .since = 7, .capability = null, .streams = &event_streams_45 },
+    .{ .name = "workspace-closed", .since = 7, .capability = null, .streams = &event_streams_46 },
+    .{ .name = "workspace-moved", .since = 7, .capability = null, .streams = &event_streams_47 },
+    .{ .name = "workspace-renamed", .since = 7, .capability = null, .streams = &event_streams_48 },
 };
