@@ -78,7 +78,7 @@ describe("cmux-tui install and daemon commands", () => {
     // Skip the download when the installed copy already matches the pin.
     expect(command).toContain(`'${SHA}' "$CMUX_TUI_BIN" | sha256sum -c >/dev/null 2>&1; then :; else`);
     expect(command).toContain(`'${HOOK_SHA}' "$CMUX_TUI_HOOK_BIN" | sha256sum -c >/dev/null 2>&1`);
-    expect(command).toContain(`curl -fsSL --retry 3 --retry-delay 2 -o "$CMUX_TUI_HOOK_TMP" '${HOOK_URL}'`);
+    expect(command).toContain(`curl -fsSL --retry 3 -o "$CMUX_TUI_HOOK_TMP" '${HOOK_URL}'`);
     // The download is verified against the same pin before it replaces anything.
     expect(command).toContain(`curl -fsSL --retry 3 --retry-delay 2 -o "$CMUX_TUI_TMP" '${URL}'`);
     expect(command).toContain(`wget -q -O "$CMUX_TUI_TMP" '${URL}'`);

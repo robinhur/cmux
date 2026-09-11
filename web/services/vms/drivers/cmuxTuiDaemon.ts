@@ -160,7 +160,7 @@ export function parseCmuxTuiManifest(
     throw new ProviderError(provider, `cmux-tui manifest at ${manifestUrl} has no ${CMUX_TUI_LINUX_TARGET} sha256 — publish artifacts from a main with the musl target`);
   }
   if (!/^[0-9a-f]{64}$/.test(hookSha256)) {
-    throw new ProviderError(provider, `cmux-tui manifest at ${manifestUrl} has no ${CMUX_TUI_HOOK_LINUX_TARGET} sha256 — publish the matching cmux-tui-hook artifact`);
+    throw new ProviderError(provider, "Cloud VM agent hooks are unavailable in this image");
   }
   const base = manifestUrl.replace(/\/manifest\.json$/, "");
   return {
@@ -225,7 +225,7 @@ export function cmuxTuiInstallCommand(source: CmuxTuiSource): string {
   const tmp = '"$CMUX_TUI_TMP"';
   const hookTmp = '"$CMUX_TUI_HOOK_TMP"';
   const pinned = (path: string) => `printf '%s  %s\n' ${shellQuote(source.sha256)} ${path} | sha256sum -c >/dev/null 2>&1`;
-  const hookPinned = (path: string) => `printf '%s  %s\n' ${shellQuote(source.hookSha256)} ${path} | sha256sum -c >/dev/null 2>&1`;
+  const hookPinned = (path: string) => `printf '%s  %s\n' ${shellQuote(source.hookSha256 ?? "")} ${path} | sha256sum -c >/dev/null 2>&1`;
   const fetch =
     `if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 --retry-delay 2 -o ${tmp} ${shellQuote(source.url)}; ` +
     `elif command -v wget >/dev/null 2>&1; then wget -q -O ${tmp} ${shellQuote(source.url)}; ` +
@@ -237,7 +237,7 @@ export function cmuxTuiInstallCommand(source: CmuxTuiSource): string {
     `CMUX_TUI_HOOK_TMP="$CMUX_TUI_HOOK_BIN.tmp"`,
     `mkdir -p "$(dirname "$CMUX_TUI_BIN")"`,
     `if [ -x ${bin} ] && ${pinned(bin)}; then :; else ${fetch} && ${pinned(tmp)} && chmod 755 ${tmp} && mv -f ${tmp} ${bin}; fi`,
-    `if [ -x ${hookBin} ] && ${hookPinned(hookBin)}; then :; else if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 --retry-delay 2 -o ${hookTmp} ${shellQuote(source.hookUrl)}; elif command -v wget >/dev/null 2>&1; then wget -q -O ${hookTmp} ${shellQuote(source.hookUrl)}; else false; fi && ${hookPinned(hookTmp)} && chmod 755 ${hookTmp} && mv -f ${hookTmp} ${hookBin}; fi`,
+    `if [ -x ${hookBin} ] && ${hookPinned(hookBin)}; then :; else if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 -o ${hookTmp} ${shellQuote(source.hookUrl)}; elif command -v wget >/dev/null 2>&1; then wget -q -O ${hookTmp} ${shellQuote(source.hookUrl)}; else false; fi && ${hookPinned(hookTmp)} && chmod 755 ${hookTmp} && mv -f ${hookTmp} ${hookBin}; fi`,
     `ln -sfn ${bin} /usr/local/bin/cmux-tui`,
     `ln -sfn ${hookBin} /usr/local/bin/cmux-tui-hook`,
     // Only the nodes this install created, never the daemon's state tree.
