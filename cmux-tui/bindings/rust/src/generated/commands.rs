@@ -1,5 +1,5 @@
 // This file is generated. Do not edit by hand.
-// cmux-tui mux protocol 12, IR a32cb8ec76bce28c995e39a62d6ea57136197ee7b173299dbc8f5c7f53ebdd47.
+// cmux-tui mux protocol 12, IR e5f9d207cfb314bdcf3e7ab96b235e8b98188fbe2f662e2738ec490ab0279663.
 // The emitter owns this layout so generation is independent of the installed rustfmt.
 
 use super::metadata::*;
@@ -1266,6 +1266,8 @@ pub enum SubscribeRequestTreeEvents {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SubscribeRequest {
     #[serde(default, skip_serializing_if = "Optional::is_missing")]
+    pub presence_only: Optional<bool>,
+    #[serde(default, skip_serializing_if = "Optional::is_missing")]
     pub surface: Optional<T::Id>,
     #[serde(default, skip_serializing_if = "Optional::is_missing")]
     pub tree_events: Optional<SubscribeRequestTreeEvents>,
@@ -1863,6 +1865,10 @@ impl CmuxClient {
     }
 
     pub fn subscribe(&mut self, request: SubscribeRequest) -> Result<CmuxStream> {
+        if !request.presence_only.is_missing() {
+            self.require_protocol_field("subscribe", 12)?;
+            self.require_capability_field("subscribe", "presence-v1")?;
+        }
         if !request.surface.is_missing() {
             self.require_protocol_field("subscribe", 9)?;
             self.require_capability_field("subscribe", "surface-subscribe-filter")?;

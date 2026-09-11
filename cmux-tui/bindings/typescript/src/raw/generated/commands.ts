@@ -1,5 +1,5 @@
 /* This file is generated. Do not edit by hand. */
-/* cmux-tui mux protocol 12, IR a32cb8ec76bce28c995e39a62d6ea57136197ee7b173299dbc8f5c7f53ebdd47. */
+/* cmux-tui mux protocol 12, IR e5f9d207cfb314bdcf3e7ab96b235e8b98188fbe2f662e2738ec490ab0279663. */
 
 
 import type * as T from "./types.js";
@@ -910,6 +910,7 @@ export type SplitResult = T.SurfaceResult;
 /** Protocol v5; authority: frontend. */
 export interface SubscribeRequest extends CmuxRequestBase {
   cmd: "subscribe";
+  "presence_only"?: (boolean) | null;
   "surface"?: (T.Id) | null;
   "tree_events"?: ("coarse" | "deltas") | null;
 }

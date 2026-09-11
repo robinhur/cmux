@@ -8,7 +8,7 @@ from typing import Mapping, Optional, Tuple
 
 SCHEMA_VERSION = 2
 MUX_PROTOCOL = 12
-IR_SHA256 = 'a32cb8ec76bce28c995e39a62d6ea57136197ee7b173299dbc8f5c7f53ebdd47'
+IR_SHA256 = 'e5f9d207cfb314bdcf3e7ab96b235e8b98188fbe2f662e2738ec490ab0279663'
 
 
 @dataclass(frozen=True)
@@ -1353,6 +1353,7 @@ COMMANDS = {
         ('frontend',),
         'subscribe',
         {
+            'presence_only': CommandFieldMetadata(12, 'presence-v1'),
             'surface': CommandFieldMetadata(9, 'surface-subscribe-filter'),
             'tree_events': CommandFieldMetadata(7, None),
         },

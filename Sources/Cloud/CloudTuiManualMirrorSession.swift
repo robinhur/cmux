@@ -519,6 +519,10 @@ final class CloudTuiManualMirrorSession {
         case let .overflow(surfaceID):
             guard surfaceID == nil || surfaceID == remoteSurfaceID else { return }
             transitionToDisconnected()
+        case .presence:
+            // Presence rides the per-machine CloudPresenceLink, never a pane
+            // attachment; this connection never subscribes.
+            return
         case let .response(requestID, ok, lease, capabilities, outcome, accepted, error):
             handleResponse(
                 requestID: requestID,
