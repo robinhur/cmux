@@ -523,7 +523,7 @@ final class CloudTuiManualMirrorSession {
             // Presence rides the per-machine CloudPresenceLink, never a pane
             // attachment; this connection never subscribes.
             return
-        case let .response(requestID, ok, lease, capabilities, outcome, accepted, error):
+        case let .response(requestID, ok, lease, capabilities, outcome, accepted, error, _):
             handleResponse(
                 requestID: requestID,
                 ok: ok,
