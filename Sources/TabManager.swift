@@ -2238,10 +2238,6 @@ class TabManager: ObservableObject {
         workspaceGrouping.deleteWorkspaceGroup(groupId: groupId, recordHistory: recordHistory)
     }
 
-    func renameWorkspaceGroup(groupId: UUID, name: String) {
-        workspaceGrouping.renameWorkspaceGroup(groupId: groupId, name: name)
-    }
-
     func toggleWorkspaceGroupCollapsed(groupId: UUID) {
         workspaceGrouping.toggleWorkspaceGroupCollapsed(groupId: groupId)
     }
